@@ -5,6 +5,8 @@ const db=require('../models');
 const {ServerConfig}=require('../config');
 const AppError = require('../utils/errors/app-Error');
 const serverConfig = require('../config/server-config');
+const{Enums}=require('../utils/common')
+const{BOOKED,CANCELLED}=Enums.Booking_STATUS;
 
 const bookingRepository=new BookingRepository();
 
@@ -38,78 +40,38 @@ async function createBooking(data){
    }
 }
 
-module.exports={
-     createBooking
+async function makePayment(data){
+    const transaction=await db.sequelize.transaction();
+   try {
+    const bookingDetails=await bookingRepository.get(data.bookingId,transaction);
+    if(bookingDetails.status== CANCELLED){
+      throw new AppError("The booking has expired ",StatusCodes.BAD_REQUEST);
+    }
+    console.log(bookingDetails);
+    const bookingTime=new Date(bookingDetails.createdAt)
+    const currentTime=new Date();
+    console.log("⏱ Time difference (ms):", currentTime - bookingTime);
+      if(currentTime-bookingTime>600000){
+         await bookingRepository.update(data.bookingId,{status:CANCELLED},transaction);
+         throw new AppError("The booking has expired ",StatusCodes.BAD_REQUEST);
+    }
+      
+    if(bookingDetails.totalCost!= data.totalCost){
+          throw new AppError("Amount of payment dosnt match ",StatusCodes.BAD_REQUEST);
+    }
+    if(bookingDetails.userId!=data.userId){
+         throw new AppError("the user corresponding to the booking dosnt match",StatusCodes.BAD_REQUEST);
+    }
+    // here assuming that payment is succesfull bcs currently we are not integrationg any payment gateway
+    await bookingRepository.update(data.bookingId,{status:BOOKED},transaction);
+    await transaction.commit();
+   } catch (error) {
+     await transaction.rollback()
+     throw error;
+   }
 }
-// const axios = require('axios');
-// const { StatusCodes } = require('http-status-codes');
-// const { BookingRepository, FlightRepository } = require('../repositories');
-// const db = require('../models');
-// const { ServerConfig } = require('../config');
-// const appError = require('../utils/errors/app-Error');
 
-// async function createBooking(data) {
-//     const transaction = await db.sequelize.transaction();
-    
-//     try {
-//         // 1. Fetch flight data
-//         const response = await axios.get(
-//             `${ServerConfig.FLIGHT_SERVICE}/api/v1/flights/${data.flightId}`
-//         );
-//         const flightData = response.data.data;
-
-//         // 2. Validate seat availability
-//         if (data.noOfSeats > flightData.totalSeats) {
-//             throw new appError(
-//                 "Not enough seats available", 
-//                 StatusCodes.BAD_REQUEST // Changed from BAD_GATEWAY
-//             );
-//         }
-
-//         // 3. Create booking
-//         const booking = await BookingRepository.create({
-//             flightId: data.flightId,
-//             noOfSeats: data.noOfSeats,
-//             // Add other required fields
-//         }, { transaction });
-
-//         // 4. Update available seats
-//         await FlightRepository.update({
-//             totalSeats: db.sequelize.literal(`totalSeats - ${data.noOfSeats}`)
-//         }, {
-//             where: { id: data.flightId },
-//             transaction
-//         });
-
-//         await transaction.commit();
-//         return booking;
-
-//     } catch (error) {
-//         await transaction.rollback();
-        
-//         // Handle specific axios errors
-//         if (error.response) {
-//             if (error.response.status === 404) {
-//                 throw new appError('Flight not found', StatusCodes.NOT_FOUND);
-//             }
-//             throw new appError(
-//                 'Flight service error', 
-//                 error.response.status || StatusCodes.INTERNAL_SERVER_ERROR
-//             );
-//         }
-        
-//         // Re-throw appError instances
-//         if (error instanceof appError) {
-//             throw error;
-//         }
-        
-//         throw new appError(
-//             'Booking failed', 
-//             StatusCodes.INTERNAL_SERVER_ERROR
-//         );
-//     }
-// }
-
-// module.exports = {
-//     createBooking
-// };
+module.exports={
+     createBooking,
+     makePayment
+}
